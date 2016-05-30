@@ -2,12 +2,8 @@ package plugins.DBV_Scheibenwischer;
 
 import ij.IJ;
 import ij.ImagePlus;
-import ij.plugin.FolderOpener;
 import ij.plugin.PlugIn;
-import ij.plugin.filter.Binary;
-import ij.plugin.filter.PlugInFilter;
 import ij.process.*;
-
 import java.io.File;
 import java.io.FileFilter;
 
@@ -16,17 +12,24 @@ import java.io.FileFilter;
  */
 public class WiperRecognition implements PlugIn {
 
+    public static final String FOLDER_PATH = "/home/floric/ownCloud/Studium/Digitale Bildverarbeitung/Testdaten";
+    public static final int PICTURE_COUNT_MAX = 15;
+    public static final int BINARIZE_THRESHOLD = 8;
+    public static final int ERODE_PASSES = 8;
+
     @Override
     public void run(String arg) {
-
-        FolderOpener folderOp = new FolderOpener();
-
-
-        File folder = new File("/home/floric/Studium/Digitale Bildverarbeitung/Testdaten");
+        File folder = new File(FOLDER_PATH);
 
         int imageCount = 0;
 
-        for (File f : folder.listFiles(new FileFilter() {
+        if (!folder.exists()) {
+            System.out.println("Folder doesn't exist!");
+            return;
+        }
+
+        // filter folder
+        FileFilter imageFilter = new FileFilter() {
             @Override
             public boolean accept(File pathname) {
                 if (pathname.isFile() && pathname.getName().endsWith(".png")) {
@@ -35,21 +38,33 @@ public class WiperRecognition implements PlugIn {
                     return false;
                 }
             }
-        })) {
-            if (imageCount < 5) {
+        };
+
+        // go through images
+        for (File f : folder.listFiles(imageFilter)) {
+            if (imageCount < PICTURE_COUNT_MAX) {
                 System.out.println("Analyze: " + f.getAbsolutePath());
 
                 ImagePlus img = IJ.openImage(f.getAbsolutePath());
                 equalize(img);
 
-                // make binary and erode
+                // make binary based on threshold
                 ImageConverter ic = new ImageConverter(img);
                 ic.convertToGray8();
                 BinaryProcessor proc = new BinaryProcessor(new ByteProcessor(img.getImage()));
-                proc.threshold(8);
-                proc.erode();
-                proc.erode();
-                fill(img.getProcessor(), 255, 0);
+                proc.threshold(BINARIZE_THRESHOLD);
+
+                // erode image
+                for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
+                    proc.erode();
+                }
+
+                for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
+                    proc.dilate();
+                }
+
+                fill(proc, 0, 255);
+
 
                 img = new ImagePlus(img.getTitle(), proc);
 
