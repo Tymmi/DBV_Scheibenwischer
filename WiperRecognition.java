@@ -1,28 +1,35 @@
 package plugins.DBV_Scheibenwischer;
 
+
 import ij.IJ;
 import ij.ImagePlus;
 import ij.plugin.PlugIn;
 import ij.process.*;
+
 import java.io.File;
 import java.io.FileFilter;
+
+import java.awt.Font;
+import java.awt.Color;
+
 
 /**
  * Created by floric on 5/19/16.
  */
 public class WiperRecognition implements PlugIn {
 
-    public static final String FOLDER_PATH = "/home/floric/ownCloud/Studium/Digitale Bildverarbeitung/Testdaten";
-    public static final int PICTURE_COUNT_MAX = 15;
-    public static final int BINARIZE_THRESHOLD = 8;
-    public static final int ERODE_PASSES = 8;
+    private static final String FOLDER_PATH = "/Users/Tim/Documents/Studium/Leipzig Master/SS 16/Bildverarbeitung/Testdaten";
+    private static final int BINARIZE_THRESHOLD = 12;
+    private static final int ERODE_PASSES = 12;
+    private static final int DILATE_PASSES = 8;
+    private static final float DETECT_MIN_VAL = 0.025f;
+    private static final float DETECT_MAX_VAL = 0.17f;
 
     @Override
     public void run(String arg) {
         File folder = new File(FOLDER_PATH);
 
-        int imageCount = 0;
-
+        // check for folder existence
         if (!folder.exists()) {
             System.out.println("Folder doesn't exist!");
             return;
@@ -32,50 +39,116 @@ public class WiperRecognition implements PlugIn {
         FileFilter imageFilter = new FileFilter() {
             @Override
             public boolean accept(File pathname) {
-                if (pathname.isFile() && pathname.getName().endsWith(".png")) {
-                    return true;
-                } else {
-                    return false;
-                }
+                return pathname.isFile() && pathname.getName().endsWith(".png");
             }
         };
 
+        int wiperImagesCount = 0;
+
         // go through images
         for (File f : folder.listFiles(imageFilter)) {
-            if (imageCount < PICTURE_COUNT_MAX) {
-                System.out.println("Analyze: " + f.getAbsolutePath());
+            System.out.println("Analyze: " + f.getAbsolutePath());
 
-                ImagePlus img = IJ.openImage(f.getAbsolutePath());
-                equalize(img);
+            ImagePlus img = IJ.openImage(f.getAbsolutePath());
 
-                // make binary based on threshold
-                ImageConverter ic = new ImageConverter(img);
-                ic.convertToGray8();
-                BinaryProcessor proc = new BinaryProcessor(new ByteProcessor(img.getImage()));
-                proc.threshold(BINARIZE_THRESHOLD);
-
-                // erode image
-                for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
-                    proc.erode();
-                }
-
-                for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
-                    proc.dilate();
-                }
-
-                fill(proc, 0, 255);
+            // equalize image
+            equalize(img);
 
 
-                img = new ImagePlus(img.getTitle(), proc);
+            // convert image to 8bit gray values
+            ImageConverter ic = new ImageConverter(img);
+            ic.convertToGray8();
 
-                img.show();
+            // convert image to binary image based on threshold
+            BinaryProcessor proc = new BinaryProcessor(new ByteProcessor(img.getImage()));
+            proc.threshold(BINARIZE_THRESHOLD);
+
+            // erode image
+            for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
+                proc.erode();
             }
-            imageCount++;
+
+            // dilate image
+            for (int passIndex = 0; passIndex < DILATE_PASSES; passIndex++) {
+                proc.dilate();
+            }
+
+            // fill holes
+            fill(proc);
+
+            // detectWiper wiper in binary image
+            boolean foundWiper = detectWiper(proc);
+
+            if (foundWiper) {
+
+                showResult(img);  
+                img.show();
+                wiperImagesCount++;
+            }
+
         }
 
+        System.out.println("Found: " + wiperImagesCount + " images!");
+    }
+             
+private static void showResult(ImagePlus imp) {
+
+        ImageProcessor ip = imp.getChannelProcessor();
+        int fontSize = ip.getWidth() / 20; 
+        int smallFontSize = fontSize/2;
+        // Postion in 2 quarter of the image
+        int horizontalPosition = ip.getWidth()/16*10;
+        int verticalPosition = ip.getHeight() / 16 * 2;
+                                
+        Font fontii = new Font("Arial", Font.PLAIN, smallFontSize); 
+        ip.setFont(fontii);
+        ip.setColor(Color.RED);
+        String str1 = "Scheibenwischer detektiert" ;
+        ip.drawString(str1,  horizontalPosition, verticalPosition + smallFontSize);
+
+            imp.show();
     }
 
-    public void equalize(ImagePlus imp) {
+
+    private boolean detectWiper(BinaryProcessor ip) {
+        long totalImageSize = ip.getWidth() * ip.getHeight();
+
+        for (int x = 0; x < ip.getWidth(); x++) {
+            for (int y = 0; y < ip.getHeight(); y++) {
+                if (ip.get(x, y) == 0) {
+                    long islandsArea = countBlackPixelsAround(ip, x, y);
+                    float relativeSize = (float) islandsArea / totalImageSize;
+
+                    if (relativeSize > DETECT_MIN_VAL && relativeSize < DETECT_MAX_VAL) {
+                        System.out.println("Wiper detected: " + relativeSize);
+                        return true;
+                    }
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private long countBlackPixelsAround(BinaryProcessor ip, int x, int y) {
+        long sum = 0;
+
+        if (x >= ip.getWidth() || y >= ip.getHeight() || x < 0 || y < 0 || ip.get(x, y) != 0) {
+            return sum;
+        } else {
+            ip.set(x, y, 255);
+
+            sum += 1;
+            sum += countBlackPixelsAround(ip, x + 1, y);
+            sum += countBlackPixelsAround(ip, x + 1, y + 1);
+            sum += countBlackPixelsAround(ip, x + 1, y - 1);
+            sum += countBlackPixelsAround(ip, x, y + 1);
+        }
+
+        return sum;
+    }
+
+    private void equalize(ImagePlus imp) {
         if (imp.getBitDepth() == 32) {
             IJ.showMessage("Contrast Enhancer", "Equalization of 32-bit images not supported.");
             return;
@@ -120,37 +193,36 @@ public class WiperRecognition implements PlugIn {
         applyTable(ip, lut);
     }
 
-
     private double getWeightedValue(int[] histogram, int i) {
         int h = histogram[i];
         if (h < 2) return (double) h;
         return Math.sqrt((double) (h));
     }
 
-    void applyTable(ImageProcessor ip, int[] lut) {
+    private void applyTable(ImageProcessor ip, int[] lut) {
         ip.applyTable(lut);
     }
 
-    void fill(ImageProcessor ip, int foreground, int background) {
+    private void fill(ImageProcessor ip) {
         int width = ip.getWidth();
         int height = ip.getHeight();
         FloodFiller ff = new FloodFiller(ip);
         ip.setColor(127);
         for (int y = 0; y < height; y++) {
-            if (ip.getPixel(0, y) == background) ff.fill(0, y);
-            if (ip.getPixel(width - 1, y) == background) ff.fill(width - 1, y);
+            if (ip.getPixel(0, y) == 255) ff.fill(0, y);
+            if (ip.getPixel(width - 1, y) == 255) ff.fill(width - 1, y);
         }
         for (int x = 0; x < width; x++) {
-            if (ip.getPixel(x, 0) == background) ff.fill(x, 0);
-            if (ip.getPixel(x, height - 1) == background) ff.fill(x, height - 1);
+            if (ip.getPixel(x, 0) == 255) ff.fill(x, 0);
+            if (ip.getPixel(x, height - 1) == 255) ff.fill(x, height - 1);
         }
         byte[] pixels = (byte[]) ip.getPixels();
         int n = width * height;
         for (int i = 0; i < n; i++) {
             if (pixels[i] == 127)
-                pixels[i] = (byte) background;
+                pixels[i] = (byte) 255;
             else
-                pixels[i] = (byte) foreground;
+                pixels[i] = (byte) 0;
         }
     }
 }
