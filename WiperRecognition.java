@@ -1,114 +1,195 @@
-package plugins.DBV_Scheibenwischer;
-
-
 import ij.IJ;
 import ij.ImagePlus;
+import ij.Macro;
+import ij.gui.GenericDialog;
+import ij.plugin.Duplicator;
 import ij.plugin.PlugIn;
 import ij.process.*;
 
+import java.awt.*;
 import java.io.File;
-import java.io.FileFilter;
-
-import java.awt.Font;
-import java.awt.Color;
-
+import java.util.HashMap;
+import java.util.Map;
 
 /**
  * Created by floric on 5/19/16.
  */
-public class WiperRecognition implements PlugIn {
+public class Wiper_Recognition implements PlugIn {
 
-    private static final String FOLDER_PATH = "/Users/Tim/Documents/Studium/Leipzig Master/SS 16/Bildverarbeitung/Testdaten";
-    private static final int BINARIZE_THRESHOLD = 12;
-    private static final int ERODE_PASSES = 12;
-    private static final int DILATE_PASSES = 8;
-    private static final float DETECT_MIN_VAL = 0.025f;
-    private static final float DETECT_MAX_VAL = 0.17f;
+    private static String FILE_INPUT_PATH = "";
+    private static String FILE_OUTPUT_PATH = "";
+    private static int BINARIZE_THRESHOLD = 12;
+    private static int ERODE_PASSES = 12;
+    private static int DILATE_PASSES = 8;
+    private static float DETECT_MIN_VAL = 0.025f;
+    private static float DETECT_MAX_VAL = 0.17f;
 
     @Override
     public void run(String arg) {
-        File folder = new File(FOLDER_PATH);
 
-        // check for folder existence
-        if (!folder.exists()) {
-            System.out.println("Folder doesn't exist!");
+        readParameters();
+
+        if (DETECT_MIN_VAL > DETECT_MAX_VAL) {
+            System.out.println("Invalid detection value borders!");
             return;
         }
 
-        // filter folder
-        FileFilter imageFilter = new FileFilter() {
-            @Override
-            public boolean accept(File pathname) {
-                return pathname.isFile() && pathname.getName().endsWith(".png");
-            }
-        };
-
-        int wiperImagesCount = 0;
-
-        // go through images
-        for (File f : folder.listFiles(imageFilter)) {
-            System.out.println("Analyze: " + f.getAbsolutePath());
-
-            ImagePlus img = IJ.openImage(f.getAbsolutePath());
-
-            // equalize image
-            equalize(img);
-
-
-            // convert image to 8bit gray values
-            ImageConverter ic = new ImageConverter(img);
-            ic.convertToGray8();
-
-            // convert image to binary image based on threshold
-            BinaryProcessor proc = new BinaryProcessor(new ByteProcessor(img.getImage()));
-            proc.threshold(BINARIZE_THRESHOLD);
-
-            // erode image
-            for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
-                proc.erode();
-            }
-
-            // dilate image
-            for (int passIndex = 0; passIndex < DILATE_PASSES; passIndex++) {
-                proc.dilate();
-            }
-
-            // fill holes
-            fill(proc);
-
-            // detectWiper wiper in binary image
-            boolean foundWiper = detectWiper(proc);
-
-            if (foundWiper) {
-
-                showResult(img);  
-                img.show();
-                wiperImagesCount++;
-            }
-
+        if (ERODE_PASSES < 1 || DILATE_PASSES < 1) {
+            System.out.println("Passes count invalid!");
+            return;
         }
 
-        System.out.println("Found: " + wiperImagesCount + " images!");
-    }
-             
-private static void showResult(ImagePlus imp) {
+        // check file existence
+        File f = new File(FILE_INPUT_PATH);
+        if (!f.exists()) {
+            System.out.println("File not found: " + f.getAbsolutePath());
+            return;
+        }
 
-        ImageProcessor ip = imp.getChannelProcessor();
-        int fontSize = ip.getWidth() / 20; 
-        int smallFontSize = fontSize/2;
-        // Postion in 2 quarter of the image
-        int horizontalPosition = ip.getWidth()/16*10;
-        int verticalPosition = ip.getHeight() / 16 * 2;
-                                
-        Font fontii = new Font("Arial", Font.PLAIN, smallFontSize); 
-        ip.setFont(fontii);
+        ImagePlus img = IJ.openImage(f.getPath());
+        ImagePlus img2 = new Duplicator().run(img);
+
+        // equalize image
+        equalize(img);
+
+        // convert image to 8bit gray values
+        ImageConverter ic = new ImageConverter(img);
+        ic.convertToGray8();
+
+        // convert image to binary image based on threshold
+        BinaryProcessor proc = new BinaryProcessor(new ByteProcessor(img.getImage()));
+        proc.threshold(BINARIZE_THRESHOLD);
+
+        // erode image
+        for (int passIndex = 0; passIndex < ERODE_PASSES; passIndex++) {
+            proc.erode();
+        }
+
+        // dilate image
+        for (int passIndex = 0; passIndex < DILATE_PASSES; passIndex++) {
+            proc.dilate();
+        }
+
+        // fill holes
+        fill(proc);
+
+        // detectWiper wiper in binary image
+        boolean foundWiper = detectWiper(proc);
+
+        if (foundWiper) {
+            System.out.println("Wiper found");
+            showResult(img2);
+        } else {
+            System.out.println("NO Wiper found");
+            img2.show();
+        }
+
+        if(FILE_OUTPUT_PATH.isEmpty()){
+
+        //extract input name
+        String fname = f.getName();
+        int pos = fname.lastIndexOf(".");
+        if (pos > 0) {
+            fname = fname.substring(0, pos);
+        }       
+        //extract file path
+        int pos2 = FILE_INPUT_PATH.lastIndexOf("/");
+        if (pos2 > 0) {
+            String dir = FILE_INPUT_PATH.substring(0, pos2+1);
+        }
+        //standard output file xxx_wiper.png
+        FILE_OUTPUT_PATH = dir + fname + "_wiper.png";
+        }
+
+        // write output file
+        IJ.save(img2, FILE_OUTPUT_PATH);
+
+        // close app
+        IJ.run("Quit");
+    }
+
+    private void readParameters() {
+        String arg;// use macro options or use UI
+        if (Macro.getOptions() != null) {
+            arg = Macro.getOptions();
+
+            Map<String, String> arguments = new HashMap<String, String>();
+
+            String[] args = arg.split("-");
+            System.out.println("Arguments found: " + args.length);
+            for (String s : args) {
+                String[] parts = s.split(" ");
+                if (parts.length != 2) {
+                    System.out.println("Skip: " + s);
+                    continue;
+                }
+
+                String command = parts[0];
+                String value = parts[1];
+
+                arguments.put(command, value);
+            }
+
+            if (arguments.containsKey("i")) {
+                FILE_INPUT_PATH = arguments.get("i");
+            }
+            if (arguments.containsKey("o")) {
+                FILE_OUTPUT_PATH = arguments.get("o");
+            }
+            if (arguments.containsKey("b")) {
+                BINARIZE_THRESHOLD = Integer.parseInt(arguments.get("b"));
+            }
+            if (arguments.containsKey("ep")) {
+                ERODE_PASSES = Integer.parseInt(arguments.get("ep"));
+            }
+            if (arguments.containsKey("dp")) {
+                DILATE_PASSES = Integer.parseInt(arguments.get("dp"));
+            }
+            if (arguments.containsKey("dmin")) {
+                DETECT_MIN_VAL = Float.parseFloat(arguments.get("dmin"));
+            }
+            if (arguments.containsKey("dmax")) {
+                DETECT_MAX_VAL = Float.parseFloat(arguments.get("dmax"));
+            }
+        } else {
+            GenericDialog gd = new GenericDialog("Wiper recognition");
+            gd.addStringField("File path", FILE_INPUT_PATH);
+            gd.addNumericField("Binarize Threshold", BINARIZE_THRESHOLD, 0);
+            gd.addNumericField("Erode Passes", ERODE_PASSES, 0);
+            gd.addNumericField("Dilate Passes", DILATE_PASSES, 0);
+            gd.addNumericField("Detection Relative Area Min", DETECT_MIN_VAL, 3);
+            gd.addNumericField("Detection Relative Area Max", DETECT_MAX_VAL, 3);
+            gd.showDialog();
+
+            if (gd.wasCanceled()) return;
+
+            FILE_INPUT_PATH = gd.getNextString();
+            BINARIZE_THRESHOLD = (int) gd.getNextNumber();
+            ERODE_PASSES = (int) gd.getNextNumber();
+            DILATE_PASSES = (int) gd.getNextNumber();
+            DETECT_MIN_VAL = (float) gd.getNextNumber();
+            DETECT_MAX_VAL = (float) gd.getNextNumber();
+        }
+
+    }
+
+    private void showResult(ImagePlus img) {
+        ImageProcessor ip = img.getChannelProcessor();
+        int fontSize = ip.getWidth() / 20;
+        int smallFontSize = fontSize / 2;
+
+        // Position in second quarter of the image
+        int horizontalPosition = ip.getWidth() / 160;
+        int verticalPosition = ip.getHeight() / 32;
+
+        Font font = new Font("Arial", Font.PLAIN, smallFontSize);
+        ip.setFont(font);
         ip.setColor(Color.RED);
-        String str1 = "Scheibenwischer detektiert" ;
-        ip.drawString(str1,  horizontalPosition, verticalPosition + smallFontSize);
+        String outputStr = "Scheibenwischer detektiert";
+        ip.drawString(outputStr, horizontalPosition, verticalPosition + smallFontSize);
 
-            imp.show();
+        img.show();
     }
-
 
     private boolean detectWiper(BinaryProcessor ip) {
         long totalImageSize = ip.getWidth() * ip.getHeight();
